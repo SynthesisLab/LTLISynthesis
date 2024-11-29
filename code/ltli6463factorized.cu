@@ -70,19 +70,15 @@ __device__ void makeRlxUnqChkCSs(
         switch (RlxUnqChkTyp) {
 
         case 1: {
-
             const int stride = lenSum / 126;
-
             int j = 0;
             for (int i = 0; i < numOfTraces; ++i) {
                 for (int k = 0; k < d_traceLen[i]; k += stride, ++j) {
                     if (j < 63) {
                         if (CS[i] & ((UINT_64)1 << k)) lCS |= (UINT_64)1 << j;
-                    }
-                    else if (j < 126) {
+                    } else if (j < 126) {
                         if (CS[i] & ((UINT_64)1 << k)) hCS |= (UINT_64)1 << (j - 63);
-                    }
-                    else break;
+                    } else break;
                 }
             }
 
@@ -90,7 +86,6 @@ __device__ void makeRlxUnqChkCSs(
         }
 
         case 2: {
-
             int j = 0;
             for (int i = 0; i < numOfTraces; ++i) {
                 UINT_64 bitPtr = 1;
@@ -98,11 +93,9 @@ __device__ void makeRlxUnqChkCSs(
                 for (int k = 0; k < maxbitsForThisTrace; ++k, ++j, bitPtr <<= 1) {
                     if (j < 63) {
                         if (CS[i] & bitPtr) lCS |= (UINT_64)1 << j;
-                    }
-                    else if (j < 126) {
+                    } else if (j < 126) {
                         if (CS[i] & bitPtr) hCS |= (UINT_64)1 << (j - 63);
-                    }
-                    else break;
+                    } else break;
                 }
             }
 
@@ -110,7 +103,6 @@ __device__ void makeRlxUnqChkCSs(
         }
 
         case 3: {
-
             for (int i = 0; i < numOfTraces; ++i) {
                 UINT_64 x = CS[i];
                 x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
@@ -124,8 +116,7 @@ __device__ void makeRlxUnqChkCSs(
 
         }
 
-    }
-    else {
+    } else {
 
         // the result will be minimal
 
@@ -135,11 +126,9 @@ __device__ void makeRlxUnqChkCSs(
             for (int k = 0; k < d_traceLen[i]; ++k, ++j, bitPtr <<= 1) {
                 if (j < 63) {
                     if (CS[i] & bitPtr) lCS |= (UINT_64)1 << j;
-                }
-                else if (j < 126) {
+                } else if (j < 126) {
                     if (CS[i] & bitPtr) hCS |= (UINT_64)1 << (j - 63);
-                }
-                else break;
+                } else break;
             }
         }
 
@@ -174,8 +163,10 @@ __global__ void hashSetsInitialisation(
 
 }
 
+enum class Op { Not, And, Or, Next, Finally, Globally, Until };
+
+template<Op op>
 __device__ void applyOperator(
-    char op,
     UINT_64* CS,
     UINT_64* d_LTLcache,
     int ldx, int rdx,
@@ -183,32 +174,32 @@ __device__ void applyOperator(
 {
 
     switch (op) {
-    case '~': {
+    case Op::Not: {
         for (int i = 0; i < numOfTraces; ++i) {
             UINT_64 negationFixer = ((UINT_64)1 << d_traceLen[i]) - 1;
             CS[i] = ~d_LTLcache[ldx * numOfTraces + i] & negationFixer;
         }
         break;
     }
-    case '&': {
+    case Op::And: {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] & d_LTLcache[rdx * numOfTraces + i];
         }
         break;
     }
-    case '|': {
+    case Op::Or: {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] | d_LTLcache[rdx * numOfTraces + i];
         }
         break;
     }
-    case 'X': {
+    case Op::Next: {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] >> 1;
         }
         break;
     }
-    case 'F': {
+    case Op::Finally: {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i];
             CS[i] |= CS[i] >> 1; CS[i] |= CS[i] >> 2; CS[i] |= CS[i] >> 4;
@@ -216,7 +207,7 @@ __device__ void applyOperator(
         }
         break;
     }
-    case 'G': {
+    case Op::Globally: {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i];
             UINT_64 cs = ~CS[i] & (((UINT_64)1 << d_traceLen[i]) - 1);
@@ -226,7 +217,7 @@ __device__ void applyOperator(
         }
         break;
     }
-    case 'U': {
+    case Op::Until: {
         for (int i = 0; i < numOfTraces; ++i) {
             UINT_64 l = d_LTLcache[ldx * numOfTraces + i];
             UINT_64 r = d_LTLcache[rdx * numOfTraces + i];
@@ -240,9 +231,6 @@ __device__ void applyOperator(
         }
         break;
     }
-    default:
-        printf("Opérateur non pris en charge: %c\n", op);
-        break;
     }
 
 }
@@ -309,8 +297,7 @@ __device__ void insertInCache(
         for (int i = numOfP; found && i < numOfTraces; ++i) if (CS[i] & 1) found = false;
         if (found) atomicCAS(d_FinalLTLIdx, -1, tid);
 
-    }
-    else {
+    } else {
 
         for (int i = 0; i < numOfTraces; ++i)
             d_temp_LTLcache[tid * numOfTraces + i] = (UINT_64)-1;
@@ -320,9 +307,8 @@ __device__ void insertInCache(
 
 }
 
-template<class hash_set_t>
+template<Op op, class hash_set_t>
 __global__ void processOperator(
-    const char op,
     const int idx1, const int idx2,
     const int idx3, const int idx4,
     const int numOfP, const int numOfN,
@@ -335,67 +321,47 @@ __global__ void processOperator(
     int* d_FinalLTLIdx)
 {
 
-    const int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    const int realTid = (blockDim.x * blockIdx.x + threadIdx.x);
+    const int tid = (op == Op::Until) ? (realTid * 2) : realTid;
     const int numOfTraces = numOfP + numOfN;
-    bool isUnary = (op == '~' || op == 'X' || op == 'F' || op == 'G');
+    constexpr bool isUnary = (op == Op::Not || op == Op::Next || op == Op::Finally || op == Op::Globally);
     int maxTid = isUnary ? (idx2 - idx1 + 1) : ((idx4 - idx3 + 1) * (idx2 - idx1 + 1));
 
     if (tid < maxTid) {
 
         int ldx = isUnary ? (idx1 + tid) : (idx1 + tid / (idx4 - idx3 + 1));
         int rdx = isUnary ? 0 : (idx3 + tid % (idx4 - idx3 + 1));
+        UINT_64 CS[maxNumOfTraces];
+        applyOperator<op>(CS, d_LTLcache, ldx, rdx, numOfTraces);
 
-        if (op == 'U') {
-
-            UINT_64 CS1[maxNumOfTraces], CS2[maxNumOfTraces];
-            applyOperator('U', CS1, d_LTLcache, ldx, rdx, numOfTraces);
-            applyOperator('U', CS2, d_LTLcache, rdx, ldx, numOfTraces);
-
-            if (onTheFly) {
-                processOnTheFly(
-                    CS1, tid * 2, numOfTraces, numOfP, ldx, rdx,
-                    d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
-                );
-                processOnTheFly(
-                    CS2, tid * 2 + 1, numOfTraces, numOfP, rdx, ldx,
-                    d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
-                );
-            }
-
-            else {
-                bool CS1_is_unique =
-                    processUniqueCS(CS1, numOfTraces, RlxUnqChkTyp, lenSum, cHashSet, iHashSet);
-                bool CS2_is_unique =
-                    processUniqueCS(CS2, numOfTraces, RlxUnqChkTyp, lenSum, cHashSet, iHashSet);
-                insertInCache(
-                    CS1_is_unique, CS1, tid * 2, numOfTraces, numOfP, ldx, rdx,
-                    d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
-                );
-                insertInCache(
-                    CS2_is_unique, CS2, tid * 2 + 1, numOfTraces, numOfP, rdx, ldx,
-                    d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
-                );
-            }
-
+        if (onTheFly) {
+            processOnTheFly(
+                CS, tid, numOfTraces, numOfP, ldx, rdx,
+                d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
+            );
+        } else {
+            bool CS_is_unique =
+                processUniqueCS(CS, numOfTraces, RlxUnqChkTyp, lenSum, cHashSet, iHashSet);
+            insertInCache(
+                CS_is_unique, CS, tid, numOfTraces, numOfP, ldx, rdx,
+                d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
+            );
         }
 
-        else {
+        if (op == Op::Until) {
 
-            UINT_64 CS[maxNumOfTraces];
-            applyOperator(op, CS, d_LTLcache, ldx, rdx, numOfTraces);
+            applyOperator<Op::Until>(CS, d_LTLcache, rdx, ldx, numOfTraces);
 
             if (onTheFly) {
                 processOnTheFly(
-                    CS, tid, numOfTraces, numOfP, ldx, rdx,
+                    CS, tid + 1, numOfTraces, numOfP, rdx, ldx,
                     d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
                 );
-            }
-
-            else {
+            } else {
                 bool CS_is_unique =
                     processUniqueCS(CS, numOfTraces, RlxUnqChkTyp, lenSum, cHashSet, iHashSet);
                 insertInCache(
-                    CS_is_unique, CS, tid, numOfTraces, numOfP, ldx, rdx,
+                    CS_is_unique, CS, tid + 1, numOfTraces, numOfP, rdx, ldx,
                     d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
                 );
             }
@@ -482,8 +448,7 @@ std::string LTLtoString(
     if (temp) {
         checkCuda(cudaMemcpy(LIdx, d_temp_leftIdx + FinalLTLIdx, sizeof(int), cudaMemcpyDeviceToHost));
         checkCuda(cudaMemcpy(RIdx, d_temp_rightIdx + FinalLTLIdx, sizeof(int), cudaMemcpyDeviceToHost));
-    }
-    else {
+    } else {
         checkCuda(cudaMemcpy(LIdx, d_leftIdx + FinalLTLIdx, sizeof(int), cudaMemcpyDeviceToHost));
         checkCuda(cudaMemcpy(RIdx, d_rightIdx + FinalLTLIdx, sizeof(int), cudaMemcpyDeviceToHost));
     }
@@ -559,8 +524,7 @@ void storeUniqueLTLs(
     if (lastIdx + numberOfNewUniqueLTLs > LTLcacheCapacity) {
         N = LTLcacheCapacity - lastIdx;
         onTheFly = true;
-    }
-    else N = numberOfNewUniqueLTLs;
+    } else N = numberOfNewUniqueLTLs;
 
     thrust::copy_n(d_temp_LTLcache_ptr, numOfTraces * N, d_LTLcache_ptr);
     thrust::copy_n(d_temp_leftIdx_ptr, N, d_leftIdx_ptr);
@@ -762,8 +726,8 @@ std::string LTLI(
                             LTLcost, allLTLs, lastIdx, N);
 #endif
                         int Blc = (N + 1023) / 1024;
-                        processOperator<hash_set_t> << <Blc, 1024 >> > (
-                            '~', x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
+                        processOperator<Op::Not, hash_set_t> << <Blc, 1024 >> > (
+                            x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
                             d_LTLcache, d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx,
                             cHashSet, iHashSet, d_FinalLTLIdx
                             );
@@ -799,8 +763,8 @@ std::string LTLI(
                         LTLcost, allLTLs, lastIdx, N);
 #endif
                     int Blc = (N + 1023) / 1024;
-                    processOperator<hash_set_t> << <Blc, 1024 >> > (
-                        '&', Idx1, Idx2, x, y, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
+                    processOperator<Op::And, hash_set_t> << <Blc, 1024 >> > (
+                        Idx1, Idx2, x, y, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
                         d_LTLcache, d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx,
                         cHashSet, iHashSet, d_FinalLTLIdx
                         );
@@ -836,8 +800,8 @@ std::string LTLI(
                         LTLcost, allLTLs, lastIdx, N);
 #endif
                     int Blc = (N + 1023) / 1024;
-                    processOperator<hash_set_t> << <Blc, 1024 >> > (
-                        '|', Idx1, Idx2, x, y, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
+                    processOperator<Op::Or, hash_set_t> << <Blc, 1024 >> > (
+                        Idx1, Idx2, x, y, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
                         d_LTLcache, d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx,
                         cHashSet, iHashSet, d_FinalLTLIdx
                         );
@@ -871,8 +835,8 @@ std::string LTLI(
                         LTLcost, allLTLs, lastIdx, N);
 #endif
                     int Blc = (N + 1023) / 1024;
-                    processOperator<hash_set_t> << <Blc, 1024 >> > (
-                        'X', x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
+                    processOperator<Op::Next, hash_set_t> << <Blc, 1024 >> > (
+                        x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
                         d_LTLcache, d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx,
                         cHashSet, iHashSet, d_FinalLTLIdx
                         );
@@ -906,8 +870,8 @@ std::string LTLI(
                         LTLcost, allLTLs, lastIdx, N);
 #endif
                     int Blc = (N + 1023) / 1024;
-                    processOperator<hash_set_t> << <Blc, 1024 >> > (
-                        'F', x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
+                    processOperator<Op::Finally, hash_set_t> << <Blc, 1024 >> > (
+                        x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
                         d_LTLcache, d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx,
                         cHashSet, iHashSet, d_FinalLTLIdx
                         );
@@ -941,8 +905,8 @@ std::string LTLI(
                         LTLcost, allLTLs, lastIdx, N);
 #endif
                     int Blc = (N + 1023) / 1024;
-                    processOperator<hash_set_t> << <Blc, 1024 >> > (
-                        'G', x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
+                    processOperator<Op::Globally, hash_set_t> << <Blc, 1024 >> > (
+                        x, y, 0, 0, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
                         d_LTLcache, d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx,
                         cHashSet, iHashSet, d_FinalLTLIdx
                         );
@@ -978,8 +942,8 @@ std::string LTLI(
                         LTLcost, allLTLs, lastIdx, 2 * N);
 #endif
                     int Blc = (N + 1023) / 1024;
-                    processOperator<hash_set_t> << <Blc, 1024 >> > (
-                        'U', Idx1, Idx2, x, y, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
+                    processOperator<Op::Until, hash_set_t> << <Blc, 1024 >> > (
+                        Idx1, Idx2, x, y, numOfP, numOfN, RlxUnqChkTyp, lenSum, onTheFly,
                         d_LTLcache, d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx,
                         cHashSet, iHashSet, d_FinalLTLIdx
                         );
@@ -1009,15 +973,10 @@ exitEnumeration:
     bool isLTLFromTempLTLcache = true;
 
     if (*FinalLTLIdx != -1) {
-
         output = LTLtoString(isLTLFromTempLTLcache, *FinalLTLIdx, lastIdx, alphabet, startPoints,
             d_leftIdx, d_rightIdx, d_temp_leftIdx, d_temp_rightIdx);
-
-    }
-    else {
-
+    } else {
         output = "not_found";
-
     }
 
     /*
@@ -1091,8 +1050,7 @@ bool readFile(
                         trace.push_back(token);
                         token = "";
                         j = 0;
-                    }
-                    else if (c == ',') continue;
+                    } else if (c == ',') continue;
                     else {
                         if (c == '1') token += alpha[j];
                         j++;
@@ -1100,8 +1058,7 @@ bool readFile(
                 }
                 trace.push_back(token);
                 pos.push_back(trace);
-            }
-            else break;
+            } else break;
         }
         while (std::getline(file, line)) {
             std::vector<std::string> trace;
@@ -1113,8 +1070,7 @@ bool readFile(
                         trace.push_back(token);
                         token = "";
                         j = 0;
-                    }
-                    else if (c == ',') continue;
+                    } else if (c == ',') continue;
                     else {
                         if (c == '1') token += alpha[j];
                         j++;
@@ -1122,13 +1078,11 @@ bool readFile(
                 }
                 trace.push_back(token);
                 neg.push_back(trace);
-            }
-            else break;
+            } else break;
         }
         file.close();
         return true;
-    }
-    else printf("Failed to open the input file.\n");
+    } else printf("Failed to open the input file.\n");
 
     return false;
 
