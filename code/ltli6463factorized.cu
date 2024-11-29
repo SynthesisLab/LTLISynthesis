@@ -173,41 +173,35 @@ __device__ void applyOperator(
     int numOfTraces)
 {
 
-    switch (op) {
-    case Op::Not: {
+    if constexpr (op == Op::Not) {
         for (int i = 0; i < numOfTraces; ++i) {
             UINT_64 negationFixer = ((UINT_64)1 << d_traceLen[i]) - 1;
             CS[i] = ~d_LTLcache[ldx * numOfTraces + i] & negationFixer;
         }
         break;
-    }
-    case Op::And: {
+    } else if constexpr (op == Op::And) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] & d_LTLcache[rdx * numOfTraces + i];
         }
         break;
-    }
-    case Op::Or: {
+    } else if constexpr (op == Op::Or) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] | d_LTLcache[rdx * numOfTraces + i];
         }
         break;
-    }
-    case Op::Next: {
+    } else if constexpr (op == Op::Next) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] >> 1;
         }
         break;
-    }
-    case Op::Finally: {
+    } else if constexpr (op == Op::Finally) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i];
             CS[i] |= CS[i] >> 1; CS[i] |= CS[i] >> 2; CS[i] |= CS[i] >> 4;
             CS[i] |= CS[i] >> 8; CS[i] |= CS[i] >> 16; CS[i] |= CS[i] >> 32;
         }
         break;
-    }
-    case Op::Globally: {
+    } else if constexpr (op == Op::Globally) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i];
             UINT_64 cs = ~CS[i] & (((UINT_64)1 << d_traceLen[i]) - 1);
@@ -216,8 +210,7 @@ __device__ void applyOperator(
             CS[i] &= ~cs;
         }
         break;
-    }
-    case Op::Until: {
+    } else {
         for (int i = 0; i < numOfTraces; ++i) {
             UINT_64 l = d_LTLcache[ldx * numOfTraces + i];
             UINT_64 r = d_LTLcache[rdx * numOfTraces + i];
@@ -230,7 +223,6 @@ __device__ void applyOperator(
             CS[i] = r;
         }
         break;
-    }
     }
 
 }
