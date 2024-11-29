@@ -178,29 +178,24 @@ __device__ void applyOperator(
             UINT_64 negationFixer = ((UINT_64)1 << d_traceLen[i]) - 1;
             CS[i] = ~d_LTLcache[ldx * numOfTraces + i] & negationFixer;
         }
-        break;
     } else if constexpr (op == Op::And) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] & d_LTLcache[rdx * numOfTraces + i];
         }
-        break;
     } else if constexpr (op == Op::Or) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] | d_LTLcache[rdx * numOfTraces + i];
         }
-        break;
     } else if constexpr (op == Op::Next) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i] >> 1;
         }
-        break;
     } else if constexpr (op == Op::Finally) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i];
             CS[i] |= CS[i] >> 1; CS[i] |= CS[i] >> 2; CS[i] |= CS[i] >> 4;
             CS[i] |= CS[i] >> 8; CS[i] |= CS[i] >> 16; CS[i] |= CS[i] >> 32;
         }
-        break;
     } else if constexpr (op == Op::Globally) {
         for (int i = 0; i < numOfTraces; ++i) {
             CS[i] = d_LTLcache[ldx * numOfTraces + i];
@@ -209,8 +204,7 @@ __device__ void applyOperator(
             cs |= cs >> 8; cs |= cs >> 16; cs |= cs >> 32;
             CS[i] &= ~cs;
         }
-        break;
-    } else {
+    } else if constexpr (op == Op::Until) {
         for (int i = 0; i < numOfTraces; ++i) {
             UINT_64 l = d_LTLcache[ldx * numOfTraces + i];
             UINT_64 r = d_LTLcache[rdx * numOfTraces + i];
@@ -222,7 +216,8 @@ __device__ void applyOperator(
             r |= l & (r >> 32);
             CS[i] = r;
         }
-        break;
+    } else {
+        [] <bool flag = false>() { static_assert(flag, "Unhandled operator"); }();
     }
 
 }
