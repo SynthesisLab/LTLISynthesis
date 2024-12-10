@@ -327,19 +327,23 @@ __device__ void insertInCache(
 
     if (CS_is_unique) {
 
-        for (int i = 0; i < numOfTraces; ++i)
-            d_temp_LTLcache[tid * numOfTraces + i] = CS[i];
+        for (int i = 0; i < numOfTraces; ++i) {
+            d_temp_LTLcache[2 * (tid * numOfTraces + i)] = CS[2 * i];
+            d_temp_LTLcache[2 * (tid * numOfTraces + i) + 1] = CS[2 * i + 1];
+        }
         d_temp_leftIdx[tid] = ldx; d_temp_rightIdx[tid] = rdx;
 
         bool found = true;
-        for (int i = 0; found && i < numOfP; ++i) if (!(CS[i] & 1)) found = false;
-        for (int i = numOfP; found && i < numOfTraces; ++i) if (CS[i] & 1) found = false;
+        for (int i = 0; found && i < numOfP; ++i) if (!(CS[2 * i] & 1)) found = false;
+        for (int i = numOfP; found && i < numOfTraces; ++i) if (CS[2 * i] & 1) found = false;
         if (found) atomicCAS(d_FinalLTLIdx, -1, tid);
 
     } else {
 
-        for (int i = 0; i < numOfTraces; ++i)
-            d_temp_LTLcache[tid * numOfTraces + i] = (UINT_64)-1;
+        for (int i = 0; i < numOfTraces; ++i) {
+            d_temp_LTLcache[2 * (tid * numOfTraces + i)] = (UINT_64)-1;
+            d_temp_LTLcache[2 * (tid * numOfTraces + i) + 1] = (UINT_64)-1;
+        }
         d_temp_leftIdx[tid] = -1; d_temp_rightIdx[tid] = -1;
 
     }
@@ -364,12 +368,12 @@ __global__ void processOperator(
     const int tid = (op == Op::Until) ? (realTid * 2) : realTid;
     const int numOfTraces = numOfP + numOfN;
     constexpr bool isUnary = (op == Op::Not || op == Op::Next || op == Op::Finally || op == Op::Globally);
-    int maxTid = isUnary ? (idx2 - idx1 + 1) : ((idx4 - idx3 + 1) * (idx2 - idx1 + 1));
+    int maxTid = isUnary ? ((idx2 - idx1 + 1) / 2) : ((idx4 - idx3 + 1) * (idx2 - idx1 + 1) / 4);
 
     if (tid < maxTid) {
 
-        int ldx = isUnary ? (idx1 + tid) : (idx1 + tid / (idx4 - idx3 + 1));
-        int rdx = isUnary ? 0 : (idx3 + tid % (idx4 - idx3 + 1));
+        int ldx = isUnary ? 2 * (idx1 + tid) : 2 * (idx1 + tid / (idx4 - idx3 + 1));
+        int rdx = isUnary ? 0 : 2 * (idx3 + tid % (idx4 - idx3 + 1));
         UINT_64 CS[maxNumOfTraces];
         applyOperator<op>(CS, d_LTLcache, ldx, rdx, numOfTraces);
 
@@ -547,29 +551,29 @@ void storeUniqueLTLs(
     thrust::device_ptr<UINT_64> new_end_ptr;
     thrust::device_ptr<UINT_64> d_LTLcache_ptr(d_LTLcache + numOfTraces * lastIdx);
     thrust::device_ptr<UINT_64> d_temp_LTLcache_ptr(d_temp_LTLcache);
-    thrust::device_ptr<int> d_leftIdx_ptr(d_leftIdx + lastIdx);
-    thrust::device_ptr<int> d_rightIdx_ptr(d_rightIdx + lastIdx);
+    thrust::device_ptr<int> d_leftIdx_ptr(d_leftIdx + lastIdx / 2);
+    thrust::device_ptr<int> d_rightIdx_ptr(d_rightIdx + lastIdx / 2);
     thrust::device_ptr<int> d_temp_leftIdx_ptr(d_temp_leftIdx);
     thrust::device_ptr<int> d_temp_rightIdx_ptr(d_temp_rightIdx);
 
     new_end_ptr = // End of d_temp_LTLcache
-        thrust::remove(d_temp_LTLcache_ptr, d_temp_LTLcache_ptr + numOfTraces * N, (UINT_64)-1);
+        thrust::remove(d_temp_LTLcache_ptr, d_temp_LTLcache_ptr + numOfTraces * N * 2, (UINT_64)-1);
     thrust::remove(d_temp_leftIdx_ptr, d_temp_leftIdx_ptr + N, -1);
     thrust::remove(d_temp_rightIdx_ptr, d_temp_rightIdx_ptr + N, -1);
 
-    // It stores all (or a part of) unique CSs until language cahce gets full
+    // It stores all (or a part of) unique CSs until language cache gets full
     // If language cache gets full, it makes onTheFly mode on
-    int numberOfNewUniqueLTLs = static_cast<int>(new_end_ptr - d_temp_LTLcache_ptr) / numOfTraces;
-    if (lastIdx + numberOfNewUniqueLTLs > LTLcacheCapacity) {
-        N = LTLcacheCapacity - lastIdx;
+    int numberOfNewUniqueLTLs = static_cast<int>(new_end_ptr - d_temp_LTLcache_ptr) / (2 * numOfTraces);
+    if (lastIdx + 2 * numberOfNewUniqueLTLs > LTLcacheCapacity) {
+        N = LTLcacheCapacity - lastIdx / 2;
         onTheFly = true;
     } else N = numberOfNewUniqueLTLs;
 
-    thrust::copy_n(d_temp_LTLcache_ptr, numOfTraces * N, d_LTLcache_ptr);
+    thrust::copy_n(d_temp_LTLcache_ptr, numOfTraces * N * 2, d_LTLcache_ptr);
     thrust::copy_n(d_temp_leftIdx_ptr, N, d_leftIdx_ptr);
     thrust::copy_n(d_temp_rightIdx_ptr, N, d_rightIdx_ptr);
 
-    lastIdx += N;
+    lastIdx += N * 2;
 
 }
 
@@ -630,12 +634,12 @@ std::string LTLI(
     }
 
     // Copying the length of traces into the constant memory
-    checkCuda(cudaMemcpyToSymbol(d_pTraceLen, pTraceLen, numOfTraces * sizeof(char)));
-    checkCuda(cudaMemcpyToSymbol(d_cTraceLen, cTraceLen, numOfTraces * sizeof(char)));
+    checkCuda(cudaMemcpyToSymbol(d_pTraceLen, pTraceLen, numOfTraces * sizeof(uint8_t)));
+    checkCuda(cudaMemcpyToSymbol(d_cTraceLen, cTraceLen, numOfTraces * sizeof(uint8_t)));
 
     const int alphabetSize = static_cast<int>(alphabet.size());
 
-    auto* LTLcache = new UINT_64[alphabetSize * numOfTraces];
+    auto* LTLcache = new UINT_64[alphabetSize * numOfTraces * 2];
 
     // Index of the last free position in the LTLcache
     int lastIdx{};
@@ -703,7 +707,7 @@ std::string LTLI(
             }
             LTLcache[index++] = binTrace;
         }
-        allLTLs++; lastIdx++;
+        allLTLs++; lastIdx += 2;
         if (found) return ch;
     }
 
@@ -736,7 +740,7 @@ std::string LTLI(
     startPoints[(c1 + 1) * 7] = lastIdx;
 
     int* d_FinalLTLIdx;
-    int* FinalLTLIdx = new int; *FinalLTLIdx = -1;
+    int* FinalLTLIdx = new int[1]; *FinalLTLIdx = -1;
     checkCuda(cudaMalloc(&d_FinalLTLIdx, sizeof(int)));
     checkCuda(cudaMemcpy(d_FinalLTLIdx, FinalLTLIdx, sizeof(int), cudaMemcpyHostToDevice));
 
@@ -758,7 +762,7 @@ std::string LTLI(
     hash_set_t cHashSet(2 * LTLcacheCapacity);
     hash_set_t iHashSet(2 * LTLcacheCapacity);
 
-    checkCuda(cudaMemcpy(d_LTLcache, LTLcache, alphabetSize * numOfTraces * sizeof(UINT_64), cudaMemcpyHostToDevice));
+    checkCuda(cudaMemcpy(d_LTLcache, LTLcache, 2 * alphabetSize * numOfTraces * sizeof(UINT_64), cudaMemcpyHostToDevice));
     hashSetsInitialisation<hash_set_t> << <1, alphabetSize >> > (numOfTraces, RlxUnqChkTyp, lenSum, cHashSet, iHashSet, d_LTLcache);
 
     // ----------------------------
@@ -783,13 +787,13 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c2) * 7];
             int Idx2 = startPoints[(LTLcost - c2 + 1) * 7] - 1;
-            int N = Idx2 - Idx1 + 1;
+            int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
                 int x = Idx1, y;
                 do {
                     y = x + std::min(temp_LTLcacheCapacity - 1, Idx2 - x);
-                    N = (y - x + 1);
+                    N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (~) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
                         LTLcost, allLTLs, lastIdx, N);
@@ -820,13 +824,13 @@ std::string LTLI(
             int Idx2 = startPoints[(i + 1) * 7] - 1;
             int Idx3 = startPoints[(LTLcost - i - c3) * 7];
             int Idx4 = startPoints[(LTLcost - i - c3 + 1) * 7] - 1;
-            int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1);
+            int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1) / 4;
 
             if (N) {
                 int x = Idx3, y;
                 do {
                     y = x + std::min(temp_LTLcacheCapacity / (Idx2 - Idx1 + 1) - 1, Idx4 - x);
-                    N = (y - x + 1) * (Idx2 - Idx1 + 1);
+                    N = (y - x + 1) * (Idx2 - Idx1 + 1) / 4;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (&) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
                         LTLcost, allLTLs, lastIdx, N);
@@ -857,13 +861,13 @@ std::string LTLI(
             int Idx2 = startPoints[(i + 1) * 7] - 1;
             int Idx3 = startPoints[(LTLcost - i - c4) * 7];
             int Idx4 = startPoints[(LTLcost - i - c4 + 1) * 7] - 1;
-            int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1);
+            int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1) / 4;
 
             if (N) {
                 int x = Idx3, y;
                 do {
                     y = x + std::min(temp_LTLcacheCapacity / (Idx2 - Idx1 + 1) - 1, Idx4 - x);
-                    N = (y - x + 1) * (Idx2 - Idx1 + 1);
+                    N = (y - x + 1) * (Idx2 - Idx1 + 1) / 4;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (|) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
                         LTLcost, allLTLs, lastIdx, N);
@@ -892,13 +896,13 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c5) * 7];
             int Idx2 = startPoints[(LTLcost - c5 + 1) * 7] - 1;
-            int N = Idx2 - Idx1 + 1;
+            int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
                 int x = Idx1, y;
                 do {
                     y = x + std::min(temp_LTLcacheCapacity - 1, Idx2 - x);
-                    N = (y - x + 1);
+                    N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (X) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
                         LTLcost, allLTLs, lastIdx, N);
@@ -927,13 +931,13 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c6) * 7];
             int Idx2 = startPoints[(LTLcost - c6 + 1) * 7] - 1;
-            int N = Idx2 - Idx1 + 1;
+            int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
                 int x = Idx1, y;
                 do {
                     y = x + std::min(temp_LTLcacheCapacity - 1, Idx2 - x);
-                    N = (y - x + 1);
+                    N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (F) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
                         LTLcost, allLTLs, lastIdx, N);
@@ -962,13 +966,13 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c7) * 7];
             int Idx2 = startPoints[(LTLcost - c7 + 1) * 7] - 1;
-            int N = Idx2 - Idx1 + 1;
+            int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
                 int x = Idx1, y;
                 do {
                     y = x + std::min(temp_LTLcacheCapacity - 1, Idx2 - x);
-                    N = (y - x + 1);
+                    N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (G) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
                         LTLcost, allLTLs, lastIdx, N);
@@ -999,13 +1003,13 @@ std::string LTLI(
             int Idx2 = startPoints[(i + 1) * 7] - 1;
             int Idx3 = startPoints[(LTLcost - i - c8) * 7];
             int Idx4 = startPoints[(LTLcost - i - c8 + 1) * 7] - 1;
-            int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1);
+            int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1) / 4;
 
             if (N) {
                 int x = Idx3, y;
                 do {
                     y = x + std::min(temp_LTLcacheCapacity / (2 * (Idx2 - Idx1 + 1)) - 1, Idx4 - x); // 2 is for until only (lUr and rUl)
-                    N = (y - x + 1) * (Idx2 - Idx1 + 1);
+                    N = (y - x + 1) * (Idx2 - Idx1 + 1) / 4;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (U) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
                         LTLcost, allLTLs, lastIdx, 2 * N);
@@ -1122,18 +1126,15 @@ bool readFile(
                         else ptrace.push_back(token);
                         token = "";
                         j = 0;
-                    } else if (c == '|') {
-                        ptrace.push_back(token);
-                        token = "";
-                        j = 0;
-                        in_cycle = true;
-                    } else if (c == ',') continue;
+                    } else if (c == '|') in_cycle = true;
+                    else if (c == ',') continue;
                     else {
                         if (c == '1') token += alpha[j];
                         j++;
                     }
                 }
                 ctrace.push_back(token);
+                if (ptrace.empty()) ptrace = ctrace; // Copy cycle into prefix if prefix is empty
                 pos.push_back({ ptrace, ctrace });
             } else break;
         }
@@ -1150,18 +1151,15 @@ bool readFile(
                         else ptrace.push_back(token);
                         token = "";
                         j = 0;
-                    } else if (c == '|') {
-                        ptrace.push_back(token);
-                        token = "";
-                        j = 0;
-                        in_cycle = true;
-                    } else if (c == ',') continue;
+                    } else if (c == '|') in_cycle = true;
+                    else if (c == ',') continue;
                     else {
                         if (c == '1') token += alpha[j];
                         j++;
                     }
                 }
                 ctrace.push_back(token);
+                if (ptrace.empty()) ptrace = ctrace; // Copy cycle into prefix if prefix is empty
                 neg.push_back({ ptrace, ctrace });
             } else break;
         }
