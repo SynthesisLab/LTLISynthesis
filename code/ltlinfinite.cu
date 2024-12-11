@@ -43,8 +43,8 @@ __global__ void generateResIndices(
     int tail = 1;
     while (head < tail) {
         int ltl = queue[head];
-        int l = d_leftIdx[ltl];
-        int r = d_rightIdx[ltl];
+        int l = d_leftIdx[ltl / 2];
+        int r = d_rightIdx[ltl / 2];
         d_FinalLTLIdx[resIdx++] = ltl;
         d_FinalLTLIdx[resIdx++] = l;
         d_FinalLTLIdx[resIdx++] = r;
@@ -161,7 +161,7 @@ __global__ void hashSetsInitialisation(
 {
 
     const int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    UINT_64 CS[maxNumOfTraces];
+    UINT_64 CS[maxNumOfTraces * 2];
 
     for (int i = 0; i < numOfTraces; ++i) {
         CS[2 * i] = d_LTLcache[2 * (tid * numOfTraces + i)];
@@ -193,43 +193,42 @@ __device__ void applyOperator(
         for (int i = 0; i < numOfTraces; ++i) {
             UINT_64 prefixNegationFixer = ((UINT_64)1 << d_pTraceLen[i]) - 1;
             UINT_64 cycleNegationFixer = ((UINT_64)1 << d_cTraceLen[i]) - 1;
-            CS[2 * i] = ~d_LTLcache[2 * (ldx * numOfTraces + i)] & prefixNegationFixer;
-            CS[2 * i + 1] = ~d_LTLcache[2 * (ldx * numOfTraces + i) + 1] & cycleNegationFixer;
+            CS[2 * i] = ~d_LTLcache[ldx * numOfTraces + 2 * i] & prefixNegationFixer;
+            CS[2 * i + 1] = ~d_LTLcache[ldx * numOfTraces + 2 * i + 1] & cycleNegationFixer;
         }
     } else if constexpr (op == Op::And) {
         for (int i = 0; i < numOfTraces; ++i) {
-            CS[2 * i] = d_LTLcache[2 * (ldx * numOfTraces + i)] & d_LTLcache[2 * (rdx * numOfTraces + i)];
-            CS[2 * i + 1] = d_LTLcache[2 * (ldx * numOfTraces + i) + 1] & d_LTLcache[2 * (rdx * numOfTraces + i) + 1];
+            CS[2 * i] = d_LTLcache[ldx * numOfTraces + 2 * i] & d_LTLcache[rdx * numOfTraces + 2 * i];
+            CS[2 * i + 1] = d_LTLcache[ldx * numOfTraces + 2 * i + 1] & d_LTLcache[rdx * numOfTraces + 2 * i + 1];
         }
     } else if constexpr (op == Op::Or) {
         for (int i = 0; i < numOfTraces; ++i) {
-            CS[2 * i] = d_LTLcache[2 * (ldx * numOfTraces + i)] | d_LTLcache[2 * (rdx * numOfTraces + i)];
-            CS[2 * i + 1] = d_LTLcache[2 * (ldx * numOfTraces + i) + 1] | d_LTLcache[2 * (rdx * numOfTraces + i) + 1];
+            CS[2 * i] = d_LTLcache[ldx * numOfTraces + 2 * i] | d_LTLcache[rdx * numOfTraces + 2 * i];
+            CS[2 * i + 1] = d_LTLcache[ldx * numOfTraces + 2 * i + 1] | d_LTLcache[rdx * numOfTraces + 2 * i + 1];
         }
     } else if constexpr (op == Op::Next) {
         for (int i = 0; i < numOfTraces; ++i) {
-            UINT_64 cycleFirstBit = d_LTLcache[2 * (ldx * numOfTraces + i) + 1] & 1;
-            CS[2 * i] = d_LTLcache[2 * (ldx * numOfTraces + i)] >> 1 | (cycleFirstBit << (d_pTraceLen[i] - 1));
-            CS[2 * i + 1] = d_LTLcache[2 * (ldx * numOfTraces + i) + 1] | (cycleFirstBit << (d_cTraceLen[i] - 1));
+            UINT_64 cycleFirstBit = d_LTLcache[ldx * numOfTraces + i + 1] & 1;
+            CS[2 * i] = d_LTLcache[ldx * numOfTraces + 2 * i] >> 1 | (cycleFirstBit << (d_pTraceLen[i] - 1));
+            CS[2 * i + 1] = d_LTLcache[ldx * numOfTraces + 2 * i + 1] >> 1 | (cycleFirstBit << (d_cTraceLen[i] - 1));
         }
     } else if constexpr (op == Op::Finally) {
         for (int i = 0; i < numOfTraces; ++i) {
-            UINT_64 pcs = d_LTLcache[2 * (ldx * numOfTraces + i)];
-            UINT_64 ccs = d_LTLcache[2 * (ldx * numOfTraces + i) + 1];
+            UINT_64 pcs = d_LTLcache[ldx * numOfTraces + 2 * i];
+            UINT_64 ccs = d_LTLcache[ldx * numOfTraces + 2 * i + 1];
             if (ccs == 0) {
                 pcs |= pcs >> 1; pcs |= pcs >> 2; pcs |= pcs >> 4;
                 pcs |= pcs >> 8; pcs |= pcs >> 16; pcs |= pcs >> 32;
             } else {
                 pcs = ((UINT_64)1 << d_pTraceLen[i]) - 1;
-                ccs |= ccs >> 1; ccs |= ccs >> 2; ccs |= ccs >> 4;
-                ccs |= ccs >> 8; ccs |= ccs >> 16; ccs |= ccs >> 32;
+                ccs = ((UINT_64)1 << d_cTraceLen[i]) - 1;
             }
             CS[2 * i] = pcs; CS[2 * i + 1] = ccs;
         }
     } else if constexpr (op == Op::Globally) {
         for (int i = 0; i < numOfTraces; ++i) {
-            CS[2 * i] = d_LTLcache[2 * (ldx * numOfTraces + i)];
-            CS[2 * i + 1] = d_LTLcache[2 * (ldx * numOfTraces + i) + 1];
+            CS[2 * i] = d_LTLcache[ldx * numOfTraces + 2 * i];
+            CS[2 * i + 1] = d_LTLcache[ldx * numOfTraces + 2 * i + 1];
             UINT_64 pcs = ~CS[2 * i] & (((UINT_64)1 << d_pTraceLen[i]) - 1);
             UINT_64 ccs = ~CS[2 * i + 1] & (((UINT_64)1 << d_cTraceLen[i]) - 1);
             if (ccs == 0) {
@@ -237,18 +236,17 @@ __device__ void applyOperator(
                 pcs |= pcs >> 8; pcs |= pcs >> 16; pcs |= pcs >> 32;
             } else {
                 pcs = ((UINT_64)1 << d_pTraceLen[i]) - 1;
-                ccs |= ccs >> 1; ccs |= ccs >> 2; ccs |= ccs >> 4;
-                ccs |= ccs >> 8; ccs |= ccs >> 16; ccs |= ccs >> 32;
+                ccs = ((UINT_64)1 << d_cTraceLen[i]) - 1;
             }
             CS[2 * i] &= ~pcs;
             CS[2 * i + 1] &= ~ccs;
         }
     } else if constexpr (op == Op::Until) {
         for (int i = 0; i < numOfTraces; ++i) {
-            __uint128_t cl = d_LTLcache[2 * (ldx * numOfTraces + i) + 1]; cl <<= 64;
-            cl += d_LTLcache[2 * (ldx * numOfTraces + i) + 1];
-            __uint128_t cr = d_LTLcache[2 * (rdx * numOfTraces + i) + 1]; cr <<= 64;
-            cr += d_LTLcache[2 * (rdx * numOfTraces + i) + 1];
+            __uint128_t cl = d_LTLcache[ldx * numOfTraces + 2 * i + 1]; cl <<= d_cTraceLen[i];
+            cl += d_LTLcache[ldx * numOfTraces + 2 * i + 1];
+            __uint128_t cr = d_LTLcache[rdx * numOfTraces + 2 * i + 1]; cr <<= d_cTraceLen[i];
+            cr += d_LTLcache[rdx * numOfTraces + 2 * i + 1];
             cr |= cl & (cr >> 1);  cl &= cl >> 1;
             cr |= cl & (cr >> 2);  cl &= cl >> 2;
             cr |= cl & (cr >> 4);  cl &= cl >> 4;
@@ -257,9 +255,9 @@ __device__ void applyOperator(
             cr |= cl & (cr >> 32); cl &= cl >> 32;
             cr |= cl & (cr >> 64);
             CS[2 * i + 1] = static_cast<UINT_64>(cr);
-            UINT_64 pl = d_LTLcache[2 * (ldx * numOfTraces + i)];
-            UINT_64 propagatedBit = (pl & CS[(2 * i) + 1] & 1) << (d_pTraceLen[i] - 1);
-            UINT_64 pr = d_LTLcache[2 * (rdx * numOfTraces + i)] | propagatedBit;
+            UINT_64 pl = d_LTLcache[ldx * numOfTraces + 2 * i];
+            UINT_64 propagatedBit = ((CS[(2 * i) + 1] & 1) << (d_pTraceLen[i] - 1)) & pl;
+            UINT_64 pr = d_LTLcache[rdx * numOfTraces + 2 * i] | propagatedBit;
             pr |= pl & (pr >> 1);  pl &= pl >> 1;
             pr |= pl & (pr >> 2);  pl &= pl >> 2;
             pr |= pl & (pr >> 4);  pl &= pl >> 4;
@@ -372,9 +370,9 @@ __global__ void processOperator(
 
     if (tid < maxTid) {
 
-        int ldx = isUnary ? 2 * (idx1 + tid) : 2 * (idx1 + tid / (idx4 - idx3 + 1));
-        int rdx = isUnary ? 0 : 2 * (idx3 + tid % (idx4 - idx3 + 1));
-        UINT_64 CS[maxNumOfTraces];
+        int ldx = isUnary ? idx1 + 2 * tid : idx1 + 2 * (tid / ((idx4 - idx3 + 1) / 2));
+        int rdx = isUnary ? 0 : idx3 + 2 * (tid % ((idx4 - idx3 + 1) / 2));
+        UINT_64 CS[maxNumOfTraces * 2];
         applyOperator<op>(CS, d_LTLcache, ldx, rdx, numOfTraces);
 
         if (onTheFly) {
@@ -565,7 +563,7 @@ void storeUniqueLTLs(
     // If language cache gets full, it makes onTheFly mode on
     int numberOfNewUniqueLTLs = static_cast<int>(new_end_ptr - d_temp_LTLcache_ptr) / (2 * numOfTraces);
     if (lastIdx + 2 * numberOfNewUniqueLTLs > LTLcacheCapacity) {
-        N = LTLcacheCapacity - lastIdx / 2;
+        N = (LTLcacheCapacity - lastIdx) / 2;
         onTheFly = true;
     } else N = numberOfNewUniqueLTLs;
 
@@ -771,6 +769,7 @@ std::string LTLI(
 
     bool onTheFly = false, lastRound = false;
     int shortageCost = -1;
+    std::cout << lenSum << std::endl;
 
     for (LTLcost = c1 + 1; LTLcost <= maxCost; ++LTLcost) {
 
@@ -787,6 +786,9 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c2) * 7];
             int Idx2 = startPoints[(LTLcost - c2 + 1) * 7] - 1;
+            std::cout << "~" << std::endl;
+            std::cout << Idx1 << std::endl;
+            std::cout << Idx2 << std::endl;
             int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
@@ -796,7 +798,7 @@ std::string LTLI(
                     N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (~) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
-                        LTLcost, allLTLs, lastIdx, N);
+                        LTLcost, allLTLs, lastIdx / 2, N);
 #endif
                     int Blc = (N + 1023) / 1024;
                     processOperator<Op::Not, hash_set_t> << <Blc, 1024 >> > (
@@ -824,6 +826,11 @@ std::string LTLI(
             int Idx2 = startPoints[(i + 1) * 7] - 1;
             int Idx3 = startPoints[(LTLcost - i - c3) * 7];
             int Idx4 = startPoints[(LTLcost - i - c3 + 1) * 7] - 1;
+            std::cout << "&" << std::endl;
+            std::cout << Idx1 << std::endl;
+            std::cout << Idx2 << std::endl;
+            std::cout << Idx3 << std::endl;
+            std::cout << Idx4 << std::endl;
             int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1) / 4;
 
             if (N) {
@@ -833,7 +840,7 @@ std::string LTLI(
                     N = (y - x + 1) * (Idx2 - Idx1 + 1) / 4;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (&) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
-                        LTLcost, allLTLs, lastIdx, N);
+                        LTLcost, allLTLs, lastIdx / 2, N);
 #endif
                     int Blc = (N + 1023) / 1024;
                     processOperator<Op::And, hash_set_t> << <Blc, 1024 >> > (
@@ -861,6 +868,11 @@ std::string LTLI(
             int Idx2 = startPoints[(i + 1) * 7] - 1;
             int Idx3 = startPoints[(LTLcost - i - c4) * 7];
             int Idx4 = startPoints[(LTLcost - i - c4 + 1) * 7] - 1;
+            std::cout << "|" << std::endl;
+            std::cout << Idx1 << std::endl;
+            std::cout << Idx2 << std::endl;
+            std::cout << Idx3 << std::endl;
+            std::cout << Idx4 << std::endl;
             int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1) / 4;
 
             if (N) {
@@ -870,7 +882,7 @@ std::string LTLI(
                     N = (y - x + 1) * (Idx2 - Idx1 + 1) / 4;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (|) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
-                        LTLcost, allLTLs, lastIdx, N);
+                        LTLcost, allLTLs, lastIdx / 2, N);
 #endif
                     int Blc = (N + 1023) / 1024;
                     processOperator<Op::Or, hash_set_t> << <Blc, 1024 >> > (
@@ -896,6 +908,9 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c5) * 7];
             int Idx2 = startPoints[(LTLcost - c5 + 1) * 7] - 1;
+            std::cout << "X" << std::endl;
+            std::cout << Idx1 << std::endl;
+            std::cout << Idx2 << std::endl;
             int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
@@ -905,7 +920,7 @@ std::string LTLI(
                     N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (X) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
-                        LTLcost, allLTLs, lastIdx, N);
+                        LTLcost, allLTLs, lastIdx / 2, N);
 #endif
                     int Blc = (N + 1023) / 1024;
                     processOperator<Op::Next, hash_set_t> << <Blc, 1024 >> > (
@@ -931,6 +946,9 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c6) * 7];
             int Idx2 = startPoints[(LTLcost - c6 + 1) * 7] - 1;
+            std::cout << "F" << std::endl;
+            std::cout << Idx1 << std::endl;
+            std::cout << Idx2 << std::endl;
             int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
@@ -940,7 +958,7 @@ std::string LTLI(
                     N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (F) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
-                        LTLcost, allLTLs, lastIdx, N);
+                        LTLcost, allLTLs, lastIdx / 2, N);
 #endif
                     int Blc = (N + 1023) / 1024;
                     processOperator<Op::Finally, hash_set_t> << <Blc, 1024 >> > (
@@ -966,6 +984,9 @@ std::string LTLI(
 
             int Idx1 = startPoints[(LTLcost - c7) * 7];
             int Idx2 = startPoints[(LTLcost - c7 + 1) * 7] - 1;
+            std::cout << "G" << std::endl;
+            std::cout << Idx1 << std::endl;
+            std::cout << Idx2 << std::endl;
             int N = (Idx2 - Idx1 + 1) / 2;
 
             if (N) {
@@ -975,7 +996,7 @@ std::string LTLI(
                     N = (y - x + 1) / 2;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (G) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
-                        LTLcost, allLTLs, lastIdx, N);
+                        LTLcost, allLTLs, lastIdx / 2, N);
 #endif
                     int Blc = (N + 1023) / 1024;
                     processOperator<Op::Globally, hash_set_t> << <Blc, 1024 >> > (
@@ -1003,6 +1024,11 @@ std::string LTLI(
             int Idx2 = startPoints[(i + 1) * 7] - 1;
             int Idx3 = startPoints[(LTLcost - i - c8) * 7];
             int Idx4 = startPoints[(LTLcost - i - c8 + 1) * 7] - 1;
+            std::cout << "U" << std::endl;
+            std::cout << Idx1 << std::endl;
+            std::cout << Idx2 << std::endl;
+            std::cout << Idx3 << std::endl;
+            std::cout << Idx4 << std::endl;
             int N = (Idx4 - Idx3 + 1) * (Idx2 - Idx1 + 1) / 4;
 
             if (N) {
@@ -1012,7 +1038,7 @@ std::string LTLI(
                     N = (y - x + 1) * (Idx2 - Idx1 + 1) / 4;
 #ifndef MEASUREMENT_MODE
                     printf("Cost %-2d | (U) | AllLTLs: %-11lu | StoredLTLs: %-10d | ToBeChecked: %-10d \n",
-                        LTLcost, allLTLs, lastIdx, 2 * N);
+                        LTLcost, allLTLs, lastIdx / 2, 2 * N);
 #endif
                     int Blc = (N + 1023) / 1024;
                     processOperator<Op::Until, hash_set_t> << <Blc, 1024 >> > (
@@ -1124,8 +1150,7 @@ bool readFile(
                     if (c == ';') {
                         if (in_cycle) ctrace.push_back(token);
                         else ptrace.push_back(token);
-                        token = "";
-                        j = 0;
+                        token = ""; j = 0;
                     } else if (c == '|') in_cycle = true;
                     else if (c == ',') continue;
                     else {
@@ -1149,8 +1174,7 @@ bool readFile(
                     if (c == ';') {
                         if (in_cycle) ctrace.push_back(token);
                         else ptrace.push_back(token);
-                        token = "";
-                        j = 0;
+                        token = ""; j = 0;
                     } else if (c == '|') in_cycle = true;
                     else if (c == ',') continue;
                     else {
