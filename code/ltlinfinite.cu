@@ -422,8 +422,8 @@ std::string toString(
     const int* startPoints)
 {
 
-    if (index < alphabet.size()) {
-        std::string s(1, *next(alphabet.begin(), index));
+    if (index / 2 < alphabet.size()) {
+        std::string s(1, *next(alphabet.begin(), index / 2));
         return s;
     }
     int i = 0;
