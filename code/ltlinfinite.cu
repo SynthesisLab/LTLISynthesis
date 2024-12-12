@@ -208,7 +208,7 @@ __device__ void applyOperator(
         }
     } else if constexpr (op == Op::Next) {
         for (int i = 0; i < numOfTraces; ++i) {
-            UINT_64 cycleFirstBit = d_LTLcache[ldx * numOfTraces + i + 1] & 1;
+            UINT_64 cycleFirstBit = d_LTLcache[ldx * numOfTraces + 2 * i + 1] & 1;
             CS[2 * i] = d_LTLcache[ldx * numOfTraces + 2 * i] >> 1 | (cycleFirstBit << (d_pTraceLen[i] - 1));
             CS[2 * i + 1] = d_LTLcache[ldx * numOfTraces + 2 * i + 1] >> 1 | (cycleFirstBit << (d_cTraceLen[i] - 1));
         }
@@ -256,7 +256,7 @@ __device__ void applyOperator(
             cr |= cl & (cr >> 64);
             CS[2 * i + 1] = static_cast<UINT_64>(cr);
             UINT_64 pl = d_LTLcache[ldx * numOfTraces + 2 * i];
-            UINT_64 propagatedBit = ((CS[(2 * i) + 1] & 1) << (d_pTraceLen[i] - 1)) & pl;
+            UINT_64 propagatedBit = ((CS[2 * i + 1] & 1) << (d_pTraceLen[i] - 1)) & pl;
             UINT_64 pr = d_LTLcache[rdx * numOfTraces + 2 * i] | propagatedBit;
             pr |= pl & (pr >> 1);  pl &= pl >> 1;
             pr |= pl & (pr >> 2);  pl &= pl >> 2;
@@ -362,8 +362,7 @@ __global__ void processOperator(
     int* d_FinalLTLIdx)
 {
 
-    const int realTid = (blockDim.x * blockIdx.x + threadIdx.x);
-    const int tid = (op == Op::Until) ? (realTid * 2) : realTid;
+    const int tid = (blockDim.x * blockIdx.x + threadIdx.x);
     const int numOfTraces = numOfP + numOfN;
     constexpr bool isUnary = (op == Op::Not || op == Op::Next || op == Op::Finally || op == Op::Globally);
     int maxTid = isUnary ? ((idx2 - idx1 + 1) / 2) : ((idx4 - idx3 + 1) * (idx2 - idx1 + 1) / 4);
@@ -372,19 +371,20 @@ __global__ void processOperator(
 
         int ldx = isUnary ? idx1 + 2 * tid : idx1 + 2 * (tid / ((idx4 - idx3 + 1) / 2));
         int rdx = isUnary ? 0 : idx3 + 2 * (tid % ((idx4 - idx3 + 1) / 2));
+        const int modifiedTid = (op == Op::Until) ? (tid * 2) : tid;
         UINT_64 CS[maxNumOfTraces * 2];
         applyOperator<op>(CS, d_LTLcache, ldx, rdx, numOfTraces);
 
         if (onTheFly) {
             processOnTheFly(
-                CS, tid, numOfTraces, numOfP, ldx, rdx,
+                CS, modifiedTid, numOfTraces, numOfP, ldx, rdx,
                 d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
             );
         } else {
             bool CS_is_unique =
                 processUniqueCS(CS, numOfTraces, RlxUnqChkTyp, lenSum, cHashSet, iHashSet);
             insertInCache(
-                CS_is_unique, CS, tid, numOfTraces, numOfP, ldx, rdx,
+                CS_is_unique, CS, modifiedTid, numOfTraces, numOfP, ldx, rdx,
                 d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
             );
         }
@@ -395,14 +395,14 @@ __global__ void processOperator(
 
             if (onTheFly) {
                 processOnTheFly(
-                    CS, tid + 1, numOfTraces, numOfP, rdx, ldx,
+                    CS, modifiedTid + 1, numOfTraces, numOfP, rdx, ldx,
                     d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
                 );
             } else {
                 bool CS_is_unique =
                     processUniqueCS(CS, numOfTraces, RlxUnqChkTyp, lenSum, cHashSet, iHashSet);
                 insertInCache(
-                    CS_is_unique, CS, tid + 1, numOfTraces, numOfP, rdx, ldx,
+                    CS_is_unique, CS, modifiedTid + 1, numOfTraces, numOfP, rdx, ldx,
                     d_temp_LTLcache, d_temp_leftIdx, d_temp_rightIdx, d_FinalLTLIdx
                 );
             }
